@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+
+rt_output.json
+rt_input.txt
+
+rt_import/
+rt_import_backup/
+codex_output/
+refreshed_rts/
+failed_rts/
+logs/
