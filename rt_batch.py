@@ -5,8 +5,10 @@ import json
 import logging
 import re
 import shutil
+import string
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -40,7 +42,9 @@ FAILED_RT_FILE_PREFIX = "failed_rts"
 LOG_DIR_NAME = "logs"
 
 EXPORT_TZ = timezone(timedelta(hours=8))
-RT_PATTERN = re.compile(r"rt_[A-Za-z0-9._-]+")
+RT_START_PATTERN = re.compile(r"rt_")
+SEPARATOR_RUN_PATTERN = re.compile(r"[^A-Za-z0-9\s]{3,}")
+RT_ALLOWED_CHARS = set(string.ascii_letters + string.digits + "._-")
 HEADERS = {
     "accept": "application/json",
     "content-type": "application/json",
@@ -120,6 +124,54 @@ def setup_logger() -> tuple[logging.Logger, Path]:
 
 LOGGER, LOG_PATH = setup_logger()
 CONSOLE = Console(LOGGER)
+
+
+def detect_repeated_separators(line: str) -> set[str]:
+    counts = Counter(match.group(0) for match in SEPARATOR_RUN_PATTERN.finditer(line))
+    return {separator for separator, count in counts.items() if count >= 2}
+
+
+def normalize_repeated_separators(line: str) -> str:
+    normalized_line = line
+    for separator in sorted(detect_repeated_separators(line), key=len, reverse=True):
+        normalized_line = normalized_line.replace(separator, " ")
+    return normalized_line
+
+
+def extract_rts_from_line(line: str) -> list[str]:
+    normalized_line = normalize_repeated_separators(line)
+    separator_runs = {
+        match.start(): match.group(0)
+        for match in SEPARATOR_RUN_PATTERN.finditer(normalized_line)
+    }
+    results: list[str] = []
+
+    for match in RT_START_PATTERN.finditer(normalized_line):
+        start = match.start()
+        end = start
+
+        while end < len(normalized_line):
+            separator = separator_runs.get(end)
+            if separator and end > start:
+                break
+
+            if normalized_line[end] in RT_ALLOWED_CHARS:
+                end += 1
+                continue
+            break
+
+        token = normalized_line[start:end]
+        if token != "rt_":
+            results.append(token)
+
+    return results
+
+
+def extract_rts_from_text(text: str) -> list[str]:
+    results: list[str] = []
+    for line in text.splitlines():
+        results.extend(extract_rts_from_line(line))
+    return results
 
 
 def now_str() -> str:
@@ -298,7 +350,7 @@ def prompt_for_runtime_setup(created_paths: list[Path], reason: str) -> bool:
 
 
 def extract_rts(text: str) -> list[str]:
-    return RT_PATTERN.findall(text)
+    return extract_rts_from_text(text)
 
 
 def collect_rts_from_import_dir() -> tuple[list[str], list[Path], dict[str, list[str]]]:
