@@ -4,8 +4,8 @@
 - 批量提取：递归扫描导入目录，也支持直接粘贴 RT。
 - 自动刷新：逐条调用刷新接口，失败时按配置重试。
 - Codex 导出：每个账号生成一个独立 JSON 文件。
-- 结果归档：保存刷新后的 RT、失败 RT、运行日志和调试明细。
-- 安全默认值：控制台默认脱敏显示，成功后自动备份并清理导入源。
+- 结果归档：保存刷新后的 RT、失败 RT、运行日志和处理明细。
+- 自动收尾：全部成功后备份导入源，并清空已处理内容。
 ## 环境要求
 - Python 3.10+
 - `requests`
@@ -47,7 +47,7 @@ python rt_batch.py
 | `codex_output/` | Codex 可导入的账号 JSON，每个账号一个文件 |
 | `refreshed_rts/` | 本次刷新得到的新 RT 汇总 |
 | `failed_rts/` | 刷新失败的原始 RT，方便重试 |
-| `rt_output.json` | 每条 RT 的处理状态、错误信息和接口返回摘要 |
+| `rt_output.json` | 每条 RT 的处理状态、错误信息和返回摘要 |
 | `logs/` | 运行日志 |
 | `rt_import_backup/` | 成功处理后的导入源备份 |
 ## 运行流程
@@ -74,11 +74,11 @@ python rt_batch.py
 | `RESULTS_INCLUDE_RAW_RESPONSE` | `rt_output.json` 是否保留接口原始返回 |
 | `MASK_CONSOLE_OUTPUT` | 控制台是否脱敏显示 RT 和 token |
 默认会在控制台脱敏显示，并在全部成功后清理导入源。导入源会先备份到 `rt_import_backup/`，不会直接丢弃。
-## 注意事项
-- RT 属于敏感凭据，不建议提交到 Git，也不建议发到公开聊天或日志里。
-- `codex_output/`、`refreshed_rts/`、`failed_rts/`、`logs/` 等目录已加入 `.gitignore`。
-- 导出的账号 JSON 是否显示完整账号信息，取决于接口返回的 token 内容。
-- 如果某条 RT 刷新失败，可以从 `failed_rts/` 中取出后重新运行。
-- 调试或共享结果前，先检查 `rt_output.json` 是否包含原始 RT 或接口返回。
+## 使用建议
+- 平时把 RT 放进 `rt_import/manual_input.txt` 即可；临时测试时，也可以启动后直接粘贴。
+- 处理成功后，Codex 导入文件在 `codex_output/`，新的 RT 汇总在 `refreshed_rts/`。
+- 如果有失败项，先看控制台提示；需要重跑时，直接使用 `failed_rts/` 里的内容。
+- `rt_output.json` 适合排查问题，里面记录了每条 RT 的处理状态、错误信息和返回摘要。
+- 账号信息显示是否完整，取决于刷新接口返回的 token 内容。
 ## License
 [MIT](./LICENSE)
