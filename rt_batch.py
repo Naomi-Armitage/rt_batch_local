@@ -335,43 +335,22 @@ def ensure_runtime_paths() -> list[Path]:
     return created_paths
 
 
-def prompt_for_runtime_setup(created_paths: list[Path], reason: str) -> bool:
-    if not sys.stdin.isatty():
-        CONSOLE.warn(f"{reason}，但当前环境不是交互终端，没法暂停等待输入。")
-        CONSOLE.warn(f"请先把 RT 放进：{IMPORT_DIR} 或 {INPUT_FILE_PATH}，然后重新运行。")
-        return False
-    CONSOLE.section("开始前先准备一下")
-    CONSOLE.info(f"原因：{reason}")
-    if created_paths:
-        CONSOLE.info("我已经先把这些路径准备好了：")
-        for path in created_paths:
-            print(f"    {path}")
-    CONSOLE.info(f"你可以把任意包含 RT 的文本直接写进：{IMPORT_MANUAL_FILE_PATH}")
-    CONSOLE.info(f"也可以把任意包含 rt_* 的文件扔进：{IMPORT_DIR}")
-    CONSOLE.info("也可以直接粘贴 rt_* 后回车，我只会在本轮内存中处理，不写入导入源文件。")
-    CONSOLE.info("准备好后按回车继续；输入 q 再回车就退出。")
-    try:
-        return input("继续扫描? [Enter/q]: ").strip().lower() != "q"
-    except EOFError:
-        return False
-
-
 def prompt_for_runtime_rts(created_paths: list[Path], reason: str) -> list[str] | None:
     if not sys.stdin.isatty():
-        CONSOLE.warn(f"{reason}，但当前环境不是交互终端，没法暂停等待输入。")
+        CONSOLE.warn(f"{reason}，当前不是交互终端，无法等待输入。")
         CONSOLE.warn(f"请先把 RT 放进：{IMPORT_DIR} 或 {INPUT_FILE_PATH}，然后重新运行。")
         return None
-    CONSOLE.section("开始前先准备一下")
+    CONSOLE.section("等待输入")
     CONSOLE.info(f"原因：{reason}")
     if created_paths:
-        CONSOLE.info("我已经先把这些路径准备好了：")
+        CONSOLE.info("已创建以下路径：")
         for path in created_paths:
             print(f"    {path}")
-    CONSOLE.info(f"你可以把任意包含 RT 的文本直接写进：{IMPORT_MANUAL_FILE_PATH}")
-    CONSOLE.info(f"也可以把任意包含 rt_* 的文件扔进：{IMPORT_DIR}")
-    CONSOLE.info("或者直接粘贴 rt_* 后回车；直接粘贴的内容只在本轮内存中处理。")
+    CONSOLE.info(f"可将包含 RT 的文本写入：{IMPORT_MANUAL_FILE_PATH}")
+    CONSOLE.info(f"也可将包含 rt_* 的文件放入：{IMPORT_DIR}")
+    CONSOLE.info("也可以直接粘贴 rt_* 后回车，本次运行会直接处理。")
     try:
-        answer = input("继续扫描、粘贴 RT，或输入 q 退出? [Enter/rt_*/q]: ").strip()
+        answer = input("回车重新扫描，粘贴 RT 直接处理，输入 q 退出：").strip()
     except EOFError:
         return None
     if answer.lower() == "q":
@@ -651,7 +630,7 @@ def process_single_rt(session: requests.Session, rt: str, index: int, total: int
         attempt_record = {"phase": "refresh", "attempt": attempt, "started_at": now_str(), "finished_at": "", "duration_seconds": 0.0, "stage": "pending", "error": ""}
         if attempt > 1:
             wait_seconds = RETRY_DELAY * (attempt - 1)
-            CONSOLE.info(f"前一次没成功，我准备再试一次，先等 {wait_seconds}s。")
+            CONSOLE.info(f"上次刷新失败，等待 {wait_seconds}s 后重试。")
             time.sleep(wait_seconds)
         CONSOLE.info(f"第 {attempt}/{MAX_RETRY} 次调用 OpenAI 官方刷新接口 ...")
         started_attempt = time.monotonic()
@@ -696,7 +675,7 @@ def process_single_rt(session: requests.Session, rt: str, index: int, total: int
         attempt_record = {"phase": "export", "attempt": export_attempt, "started_at": now_str(), "finished_at": "", "duration_seconds": 0.0, "stage": "pending", "error": ""}
         if export_attempt > 1:
             wait_seconds = max(1, RETRY_DELAY // 2) * (export_attempt - 1)
-            CONSOLE.info(f"刷新结果已经拿到了，我这次只重试保存文件，先等 {wait_seconds}s。")
+            CONSOLE.info(f"刷新已成功，等待 {wait_seconds}s 后重试保存文件。")
             time.sleep(wait_seconds)
         CONSOLE.info(f"第 {export_attempt}/{EXPORT_WRITE_RETRY} 次保存导出文件 ...")
         started_attempt = time.monotonic()
@@ -732,7 +711,7 @@ def process_single_rt(session: requests.Session, rt: str, index: int, total: int
 
 def print_startup_summary(source_summary: dict[str, Any]) -> None:
     CONSOLE.section("RT 本地批量刷新工具")
-    CONSOLE.info("当前模式：本地 OpenAI 刷新 / Codex 导入文件")
+    CONSOLE.info("模式：本地 OpenAI 刷新 / Codex 导入文件")
     CONSOLE.info(f"官方接口：{OAUTH_TOKEN_URL}")
     CONSOLE.info(f"输出目录：{CODEX_OUTPUT_DIR}")
     CONSOLE.info(f"结果文件：{OUTPUT_FILE_PATH}")
@@ -742,7 +721,7 @@ def print_startup_summary(source_summary: dict[str, Any]) -> None:
     CONSOLE.info(f"失败 RT 输出目录：{FAILED_RT_DIR}")
     CONSOLE.info(f"日志文件：{LOG_PATH}")
     CONSOLE.info(f"重试策略：官方刷新最多 {MAX_RETRY} 次，请求间隔 {DELAY}s，重试基准等待 {RETRY_DELAY}s，单次超时 {REQUEST_TIMEOUT}s；导出落盘最多 {EXPORT_WRITE_RETRY} 次")
-    CONSOLE.info("这个版本不再依赖 fk.accgood.com，也不需要 cf_clearance / ACG-SHOP。")
+    CONSOLE.info("不依赖 fk.accgood.com，无需 cf_clearance / ACG-SHOP。")
     if source_summary["import_rt_count"] or source_summary["legacy_rt_count"]:
         CONSOLE.info(f"已发现 RT：导入目录 {source_summary['import_rt_count']} 个，旧输入文件 {source_summary['legacy_rt_count']} 个")
 
@@ -753,7 +732,7 @@ def main() -> int:
     print_startup_summary(source_summary)
 
     if created_paths and not source_summary["rt_list"]:
-        manual_rts = prompt_for_runtime_rts(created_paths, "检测到运行目录刚创建好，顺手等你把 RT 放进来")
+        manual_rts = prompt_for_runtime_rts(created_paths, "运行目录已初始化，尚未找到 RT")
         if manual_rts:
             source_summary = build_manual_rt_source_summary(manual_rts)
         elif manual_rts is None:
@@ -771,7 +750,7 @@ def main() -> int:
         source_summary = load_rt_sources()
 
     if source_summary.get("manual_prompt_input"):
-        CONSOLE.ok(f"已从本轮手工粘贴内容读取到 {len(source_summary['rt_list'])} 个 RT")
+        CONSOLE.ok(f"已从粘贴内容读取到 {len(source_summary['rt_list'])} 个 RT")
     elif source_summary["used_legacy_input"] and source_summary["import_rt_count"] == 0:
         CONSOLE.ok(f"已从旧输入文件读取到 {source_summary['legacy_rt_count']} 个 RT")
     elif source_summary["used_legacy_input"]:
@@ -805,20 +784,20 @@ def main() -> int:
                 append_line(failed_rt_output_path, rt)
             persist_results(results)
             if index < len(source_summary["rt_list"]):
-                CONSOLE.info(f"这条处理完了，我先缓 {DELAY}s，避免请求太密。")
+                CONSOLE.info(f"等待 {DELAY}s 后继续，避免请求过密。")
                 time.sleep(DELAY)
     finally:
         session.close()
 
     cleanup_summary = {"batch_backup_dir": None, "archived_paths": [], "removed_backup_dirs": [], "manual_input_cleared": False, "legacy_input_cleared": False}
     if not AUTO_CLEANUP_ON_ALL_SUCCESS:
-        CONSOLE.warn("你已经关闭自动清理；原始导入源我会保留不动。")
+        CONSOLE.warn("自动清理已关闭，原始导入源保留不变。")
     elif source_summary.get("manual_prompt_input"):
-        CONSOLE.info("本轮 RT 来自手工粘贴内容，没有导入源文件需要清理。")
+        CONSOLE.info("RT 来自本次粘贴，无需清理导入源文件。")
     elif fail_count == 0:
         cleanup_summary = cleanup_input_sources(source_summary)
     else:
-        CONSOLE.warn("这次还有失败项。为了保险起见，我没有自动清理原始导入源。")
+        CONSOLE.warn("存在失败项，已保留原始导入源。")
 
     CONSOLE.section("这一轮处理完成")
     CONSOLE.info(f"总计：{len(source_summary['rt_list'])} | 成功：{success_count} | 失败：{fail_count}")
@@ -837,9 +816,9 @@ def main() -> int:
         if cleanup_summary["legacy_input_cleared"]:
             CONSOLE.info(f"旧输入文件已清空：{INPUT_FILE_PATH}")
         if cleanup_summary["removed_backup_dirs"]:
-            CONSOLE.info(f"已顺手清理旧备份批次 {len(cleanup_summary['removed_backup_dirs'])} 个")
+            CONSOLE.info(f"已清理旧备份批次 {len(cleanup_summary['removed_backup_dirs'])} 个")
     if fail_count > 0:
-        CONSOLE.section("需要你回头看一下的失败项")
+        CONSOLE.section("失败项")
         for result in results:
             if result["status"] != "success":
                 display_rt = redact_secret(result["input_rt"], 18, 6) if MASK_CONSOLE_OUTPUT else result["input_rt"]

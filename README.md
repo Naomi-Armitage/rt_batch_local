@@ -1,37 +1,29 @@
 # rt_batch_local
-
-一个本地化的 RT 批量刷新脚本。它直接调用 `https://auth.openai.com/oauth/token` 刷新 RT，本地生成 Codex 可导入 JSON，不再依赖 `fk.accgood.com` 或 Cookie。
-
-## 功能概览
-
-- 直接调用 OpenAI 官方刷新接口
-- 本地组装 Codex 可导入 JSON
-- 每个 RT 单独导出为一个 JSON 文件
-- 每次运行额外生成刷新后 RT 汇总、失败 RT 汇总和日志文件
-- 支持批量导入目录递归扫描，自动从任意文本中提取 `rt_*`
-- 自动创建目录、交互暂停、手工导入文件、导入源备份与清理
-- 结果文件采用原子写入，减少中断时的损坏风险
-- 支持导出落盘重试、控制台脱敏显示和按批次保留导入备份
-
-## 依赖
-
+本地批量刷新 RT，并生成 Codex 可导入的账号 JSON。脚本会从文本或目录中提取 `rt_*`，逐条刷新，最后把成功、失败、日志和导出文件分开保存，方便后续导入或重试。
+## 功能
+- 批量提取：递归扫描导入目录，也支持直接粘贴 RT。
+- 自动刷新：逐条调用刷新接口，失败时按配置重试。
+- Codex 导出：每个账号生成一个独立 JSON 文件。
+- 结果归档：保存刷新后的 RT、失败 RT、运行日志和调试明细。
+- 安全默认值：控制台默认脱敏显示，成功后自动备份并清理导入源。
+## 环境要求
 - Python 3.10+
 - `requests`
-
 安装依赖：
-
 ```powershell
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
-
+如果系统 Python 不允许直接安装依赖，可以使用项目虚拟环境：
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe rt_batch.py
+```
 ## 快速开始
-
 ```powershell
 python rt_batch.py
 ```
-
-首次运行时，如果缺少所需目录或没有可处理的 RT，脚本会自动创建这些路径：
-
+首次运行会自动创建这些目录和文件：
 - `rt_import/`
 - `rt_import/manual_input.txt`
 - `rt_import_backup/`
@@ -39,139 +31,54 @@ python rt_batch.py
 - `refreshed_rts/`
 - `failed_rts/`
 - `logs/`
-
-然后暂停，等你把任意包含 `rt_*` 的文本放进去再继续。
-
-## 导入方式
-
-推荐直接编辑：
-
-- `rt_import/manual_input.txt`
-
-这个文件不要求一行一个 RT。日志、JSON、聊天记录、混杂文本都可以，脚本会自动提取其中所有 `rt_*`。
-
-也可以把任意包含 `rt_*` 的文件直接丢进：
-
-- `rt_import/`
-
-脚本会递归扫描整个目录。
-
-兼容旧方式：
-
+如果启动时没有找到 RT，脚本会等待输入。可以直接回车重新扫描，也可以粘贴一条或多条 `rt_*` 后回车处理。
+## 输入方式
+推荐使用以下任一方式：
+1. 编辑 `rt_import/manual_input.txt`
+2. 把包含 `rt_*` 的文件放进 `rt_import/`
+3. 启动脚本后，在提示符里直接粘贴 `rt_*`
+输入内容不要求一行一个 RT。日志、JSON、聊天记录或混合文本都可以，脚本会自动提取其中的 `rt_*`。
+兼容旧输入文件：
 - `rt_input.txt`
-
-如果 `rt_import/` 里没有提取到 RT，脚本仍会回退读取这个文件。
-
+当 `rt_import/` 没有提取到 RT 时，脚本会继续尝试读取 `rt_input.txt`。
+## 输出文件
+| 路径 | 内容 |
+| --- | --- |
+| `codex_output/` | Codex 可导入的账号 JSON，每个账号一个文件 |
+| `refreshed_rts/` | 本次刷新得到的新 RT 汇总 |
+| `failed_rts/` | 刷新失败的原始 RT，方便重试 |
+| `rt_output.json` | 每条 RT 的处理状态、错误信息和接口返回摘要 |
+| `logs/` | 运行日志 |
+| `rt_import_backup/` | 成功处理后的导入源备份 |
 ## 运行流程
-
-1. 检查并创建运行目录
-2. 扫描 `rt_import/` 和 `manual_input.txt`
-3. 如果没有 RT，则交互暂停，等待补充
-4. 逐条调用 `auth.openai.com/oauth/token` 刷新 RT
-5. 本地生成 Codex JSON、写入刷新后的 RT、记录 `rt_output.json`
-6. 如有失败项，额外输出一份失败 RT 清单
-7. 全部成功时自动清理导入源并做批次备份
-8. 同步写入运行日志，便于事后排查
-
-## 输出说明
-
-### 1. 账号导出文件
-
-输出到：
-
-- `codex_output/`
-
-文件名示例：
-
-- `codex_example@outlook.com.json`
-
-### 2. 刷新后的 RT 汇总
-
-输出到：
-
-- `refreshed_rts/`
-
-文件名示例：
-
-- `refreshed_rts_20260403_021500.txt`
-
-每次运行一份，一行一个新 RT。
-
-### 3. 失败 RT 汇总
-
-输出到：
-
-- `failed_rts/`
-
-文件名示例：
-
-- `failed_rts_20260403_021500.txt`
-
-处理失败的 RT 会单独汇总，方便再次导入重跑。
-
-### 4. 调试结果
-
-输出到：
-
-- `rt_output.json`
-
-里面会保留每条 RT 的处理状态、刷新接口返回、导出路径、错误信息和可用性诊断。
-
-### 5. 运行日志
-
-输出到：
-
-- `logs/`
-
-文件名示例：
-
-- `rt_batch_local_20260403_021500.log`
-
-### 6. 导入备份
-
-导入源文件会备份到：
-
-- `rt_import_backup/`
-
-批量导入文件会按运行批次进入：
-
-- `rt_import_backup/batch_YYYYMMDD_HHMMSS/`
-
-`manual_input.txt` 和兼容模式下的 `rt_input.txt` 也会单独备份。
-
-## 主要配置
-
-可在 `rt_batch.py` 顶部调整：
-
-- `CLIENT_ID`
-- `DELAY`
-- `MAX_RETRY`
-- `RETRY_DELAY`
-- `EXPORT_WRITE_RETRY`
-- `REQUEST_TIMEOUT`
-- `AUTO_CLEANUP_ON_ALL_SUCCESS`
-- `IMPORT_BACKUP_KEEP_BATCHES`
-- `RESULTS_INCLUDE_INPUT_RT`
-- `RESULTS_INCLUDE_RAW_RESPONSE`
-- `MASK_CONSOLE_OUTPUT`
-
-默认情况下：
-
-- `AUTO_CLEANUP_ON_ALL_SUCCESS = True`
-- `MASK_CONSOLE_OUTPUT = True`
-
+1. 创建运行目录并扫描输入源
+2. 从文本中提取并去重 `rt_*`
+3. 按顺序刷新每条 RT
+4. 为成功项生成 Codex JSON，并记录新的 RT
+5. 为失败项生成重试清单
+6. 写入运行日志和 `rt_output.json`
+7. 全部成功时备份并清空导入源
+## 配置
+常用配置在 `rt_batch.py` 顶部：
+| 配置 | 说明 |
+| --- | --- |
+| `CLIENT_ID` | 刷新接口使用的客户端 ID |
+| `DELAY` | 每条 RT 之间的等待秒数 |
+| `MAX_RETRY` | 刷新失败后的最大重试次数 |
+| `RETRY_DELAY` | 重试前的基础等待秒数 |
+| `EXPORT_WRITE_RETRY` | 导出文件写入失败后的重试次数 |
+| `REQUEST_TIMEOUT` | 单次请求超时时间 |
+| `AUTO_CLEANUP_ON_ALL_SUCCESS` | 全部成功后是否备份并清空输入源 |
+| `IMPORT_BACKUP_KEEP_BATCHES` | 保留的导入备份批次数 |
+| `RESULTS_INCLUDE_INPUT_RT` | `rt_output.json` 是否保留输入 RT |
+| `RESULTS_INCLUDE_RAW_RESPONSE` | `rt_output.json` 是否保留接口原始返回 |
+| `MASK_CONSOLE_OUTPUT` | 控制台是否脱敏显示 RT 和 token |
+默认会在控制台脱敏显示，并在全部成功后清理导入源。导入源会先备份到 `rt_import_backup/`，不会直接丢弃。
 ## 注意事项
-
-- 这个版本不再依赖第三方转换站点
-- 运行前不需要 `CF_CLEARANCE` 或 `ACG-SHOP`
-- 导出的账号 JSON 是否完全可用，取决于官方返回的 `id_token` 是否包含 `chatgpt_account_id` 和 `chatgpt_plan_type`
-- 如果官方返回里缺少这两个 claim，Codex 面板里可能看不到额度或套餐信息
-- 当前仓库的第三方依赖只有 `requests`，其余导入均为 Python 标准库模块
-
-## 来源说明
-
-这个本地化版本是基于原 `rt_batch` 的批处理结构改出来的，思路参考了你给的语雀文档《新版GPT账号RT刷新接口》，但实现上改成了本地直连官方刷新接口。
-
+- RT 属于敏感凭据，不建议提交到 Git，也不建议发到公开聊天或日志里。
+- `codex_output/`、`refreshed_rts/`、`failed_rts/`、`logs/` 等目录已加入 `.gitignore`。
+- 导出的账号 JSON 是否显示完整账号信息，取决于接口返回的 token 内容。
+- 如果某条 RT 刷新失败，可以从 `failed_rts/` 中取出后重新运行。
+- 调试或共享结果前，先检查 `rt_output.json` 是否包含原始 RT 或接口返回。
 ## License
-
 [MIT](./LICENSE)
