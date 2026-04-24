@@ -13,11 +13,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
+try:
+    import requests
+except ModuleNotFoundError as exc:
+    if exc.name != "requests":
+        raise
+    print("[X] 缺少依赖 requests，请先运行：python -m pip install -r requirements.txt")
+    raise SystemExit(1) from exc
 
 
 OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
-CLIENT_ID = "app_WXrF1LSkiTtfYqiL6XtjygvX"
+CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 DELAY = 2
 MAX_RETRY = 3
 RETRY_DELAY = 3
@@ -342,11 +348,35 @@ def prompt_for_runtime_setup(created_paths: list[Path], reason: str) -> bool:
             print(f"    {path}")
     CONSOLE.info(f"你可以把任意包含 RT 的文本直接写进：{IMPORT_MANUAL_FILE_PATH}")
     CONSOLE.info(f"也可以把任意包含 rt_* 的文件扔进：{IMPORT_DIR}")
+    CONSOLE.info("也可以直接粘贴 rt_* 后回车，我只会在本轮内存中处理，不写入导入源文件。")
     CONSOLE.info("准备好后按回车继续；输入 q 再回车就退出。")
     try:
         return input("继续扫描? [Enter/q]: ").strip().lower() != "q"
     except EOFError:
         return False
+
+
+def prompt_for_runtime_rts(created_paths: list[Path], reason: str) -> list[str] | None:
+    if not sys.stdin.isatty():
+        CONSOLE.warn(f"{reason}，但当前环境不是交互终端，没法暂停等待输入。")
+        CONSOLE.warn(f"请先把 RT 放进：{IMPORT_DIR} 或 {INPUT_FILE_PATH}，然后重新运行。")
+        return None
+    CONSOLE.section("开始前先准备一下")
+    CONSOLE.info(f"原因：{reason}")
+    if created_paths:
+        CONSOLE.info("我已经先把这些路径准备好了：")
+        for path in created_paths:
+            print(f"    {path}")
+    CONSOLE.info(f"你可以把任意包含 RT 的文本直接写进：{IMPORT_MANUAL_FILE_PATH}")
+    CONSOLE.info(f"也可以把任意包含 rt_* 的文件扔进：{IMPORT_DIR}")
+    CONSOLE.info("或者直接粘贴 rt_* 后回车；直接粘贴的内容只在本轮内存中处理。")
+    try:
+        answer = input("继续扫描、粘贴 RT，或输入 q 退出? [Enter/rt_*/q]: ").strip()
+    except EOFError:
+        return None
+    if answer.lower() == "q":
+        return None
+    return extract_rts(answer)
 
 
 def extract_rts(text: str) -> list[str]:
@@ -417,6 +447,19 @@ def load_rt_sources() -> dict[str, Any]:
     }
 
 
+def build_manual_rt_source_summary(rt_list: list[str]) -> dict[str, Any]:
+    source_tags_by_rt = {rt: ["manual:prompt"] for rt in rt_list}
+    return {
+        "rt_list": rt_list,
+        "source_tags_by_rt": source_tags_by_rt,
+        "used_import_files": [],
+        "import_rt_count": 0,
+        "legacy_rt_count": 0,
+        "used_legacy_input": False,
+        "manual_prompt_input": True,
+    }
+
+
 def build_session() -> requests.Session:
     session = requests.Session()
     session.headers.update(HEADERS)
@@ -432,8 +475,13 @@ def refresh_rt(session: requests.Session, rt: str) -> dict[str, Any]:
     for label, sender in attempts:
         try:
             response = sender()
-            response.raise_for_status()
-            payload = response.json()
+            try:
+                response_payload = response.json()
+            except ValueError:
+                response_payload = response.text
+            if not response.ok:
+                raise RuntimeError(f"HTTP {response.status_code}: {preview_payload(response_payload)}")
+            payload = response_payload
             if not isinstance(payload, dict):
                 raise RuntimeError(f"接口返回格式异常：{payload!r}")
             return payload
@@ -705,16 +753,26 @@ def main() -> int:
     print_startup_summary(source_summary)
 
     if created_paths and not source_summary["rt_list"]:
-        if not prompt_for_runtime_setup(created_paths, "检测到运行目录刚创建好，顺手等你把 RT 放进来"):
+        manual_rts = prompt_for_runtime_rts(created_paths, "检测到运行目录刚创建好，顺手等你把 RT 放进来")
+        if manual_rts:
+            source_summary = build_manual_rt_source_summary(manual_rts)
+        elif manual_rts is None:
             return 2
-        source_summary = load_rt_sources()
+        else:
+            source_summary = load_rt_sources()
 
     while not source_summary["rt_list"]:
-        if not prompt_for_runtime_setup([], "当前还没有提取到任何 RT"):
+        manual_rts = prompt_for_runtime_rts([], "当前还没有提取到任何 RT")
+        if manual_rts:
+            source_summary = build_manual_rt_source_summary(manual_rts)
+            break
+        if manual_rts is None:
             return 2
         source_summary = load_rt_sources()
 
-    if source_summary["used_legacy_input"] and source_summary["import_rt_count"] == 0:
+    if source_summary.get("manual_prompt_input"):
+        CONSOLE.ok(f"已从本轮手工粘贴内容读取到 {len(source_summary['rt_list'])} 个 RT")
+    elif source_summary["used_legacy_input"] and source_summary["import_rt_count"] == 0:
         CONSOLE.ok(f"已从旧输入文件读取到 {source_summary['legacy_rt_count']} 个 RT")
     elif source_summary["used_legacy_input"]:
         CONSOLE.ok(f"已合并读取到 {len(source_summary['rt_list'])} 个 RT（导入目录 {source_summary['import_rt_count']} 个，旧输入文件 {source_summary['legacy_rt_count']} 个）")
@@ -755,6 +813,8 @@ def main() -> int:
     cleanup_summary = {"batch_backup_dir": None, "archived_paths": [], "removed_backup_dirs": [], "manual_input_cleared": False, "legacy_input_cleared": False}
     if not AUTO_CLEANUP_ON_ALL_SUCCESS:
         CONSOLE.warn("你已经关闭自动清理；原始导入源我会保留不动。")
+    elif source_summary.get("manual_prompt_input"):
+        CONSOLE.info("本轮 RT 来自手工粘贴内容，没有导入源文件需要清理。")
     elif fail_count == 0:
         cleanup_summary = cleanup_input_sources(source_summary)
     else:
